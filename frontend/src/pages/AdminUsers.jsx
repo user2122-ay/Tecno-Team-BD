@@ -7,6 +7,10 @@ const ASSIGNABLE_ROLES = ["pendiente", "coordinador_sub", "coordinador", "admin"
 export default function AdminUsers() {
   const [users, setUsers] = useState([]);
   const [subdivisions, setSubdivisions] = useState([]);
+  const [error, setError] = useState("");
+  // Mientras se decide la subdivisión, guardamos aquí qué usuarios están
+  // "esperando elegir subdivisión" antes de confirmar el cambio a coordinador_sub.
+  const [pendingSubRole, setPendingSubRole] = useState({});
 
   async function load() {
     const [usersRes, subsRes] = await Promise.all([api.get("/users"), api.get("/subdivisions")]);
@@ -19,8 +23,34 @@ export default function AdminUsers() {
   }, []);
 
   async function updateRole(id, role, subdivision) {
-    await api.put(`/users/${id}/role`, { role, subdivision });
-    load();
+    try {
+      setError("");
+      await api.put(`/users/${id}/role`, { role, subdivision });
+      setPendingSubRole((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || "No se pudo actualizar el rol.");
+    }
+  }
+
+  // Al elegir "coordinador_sub" en el primer select, NO mandamos nada todavía:
+  // solo marcamos el usuario como "esperando subdivisión" y mostramos el segundo select.
+  // El cambio real se guarda cuando se elige la subdivisión (ver el onChange del segundo select).
+  function handleRoleChange(u, newRole) {
+    if (newRole === "coordinador_sub") {
+      setPendingSubRole((prev) => ({ ...prev, [u._id]: true }));
+      return;
+    }
+    setPendingSubRole((prev) => {
+      const next = { ...prev };
+      delete next[u._id];
+      return next;
+    });
+    updateRole(u._id, newRole, null);
   }
 
   async function toggleActive(id, active) {
@@ -38,6 +68,12 @@ export default function AdminUsers() {
           que le asignes un rol aquí.
         </p>
       </header>
+
+      {error && (
+        <div className="mb-4 rounded-md border border-bad/30 bg-bad/10 px-4 py-2 text-sm text-bad">
+          {error}
+        </div>
+      )}
 
       <div className="card overflow-hidden">
         <table className="w-full text-sm">
@@ -64,8 +100,8 @@ export default function AdminUsers() {
                 <td className="px-5 py-3">
                   <select
                     className="input py-1.5 text-xs"
-                    value={u.role}
-                    onChange={(e) => updateRole(u._id, e.target.value, u.subdivision?._id)}
+                    value={pendingSubRole[u._id] ? "coordinador_sub" : u.role}
+                    onChange={(e) => handleRoleChange(u, e.target.value)}
                   >
                     {ASSIGNABLE_ROLES.map((r) => (
                       <option key={r} value={r}>
@@ -75,10 +111,10 @@ export default function AdminUsers() {
                   </select>
                 </td>
                 <td className="px-5 py-3">
-                  {u.role === "coordinador_sub" ? (
+                  {u.role === "coordinador_sub" || pendingSubRole[u._id] ? (
                     <select
                       className="input py-1.5 text-xs"
-                      value={u.subdivision?._id || ""}
+                      value={u.role === "coordinador_sub" ? u.subdivision?._id || "" : ""}
                       onChange={(e) => updateRole(u._id, "coordinador_sub", e.target.value)}
                     >
                       <option value="">Selecciona…</option>
