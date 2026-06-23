@@ -7,6 +7,7 @@ export default function Activities() {
   const { user } = useAuth();
   const [activities, setActivities] = useState([]);
   const [subdivisions, setSubdivisions] = useState([]);
+  const [members, setMembers] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
     subdivision: user.role === "coordinador_sub" ? user.subdivision : "",
@@ -14,7 +15,30 @@ export default function Activities() {
     description: "",
     date: new Date().toISOString().slice(0, 10),
     mediaUrls: "",
+    participants: [],
   });
+
+  // Carga los miembros disponibles para la subdivisión elegida en el formulario.
+  async function loadMembers(subdivisionId) {
+    if (!subdivisionId) {
+      setMembers([]);
+      return;
+    }
+    const res = await api.get("/members", { params: { subdivision: subdivisionId } });
+    setMembers(res.data);
+  }
+
+  function toggleParticipant(memberId) {
+    setForm((f) => {
+      const isSelected = f.participants.includes(memberId);
+      return {
+        ...f,
+        participants: isSelected
+          ? f.participants.filter((id) => id !== memberId)
+          : [...f.participants, memberId],
+      };
+    });
+  }
 
   async function loadAll() {
     const [actRes, subRes] = await Promise.all([
@@ -27,6 +51,9 @@ export default function Activities() {
 
   useEffect(() => {
     loadAll();
+    if (user.role === "coordinador_sub") {
+      loadMembers(user.subdivision);
+    }
   }, []);
 
   async function handleSubmit(e) {
@@ -39,7 +66,7 @@ export default function Activities() {
     };
     await api.post("/activities", payload);
     setShowForm(false);
-    setForm({ ...form, title: "", description: "", mediaUrls: "" });
+    setForm({ ...form, title: "", description: "", mediaUrls: "", participants: [] });
     loadAll();
   }
 
@@ -72,6 +99,15 @@ export default function Activities() {
                   {new Date(a.date).toLocaleDateString("es-PA", { weekday: "long", day: "numeric", month: "long" })}
                 </p>
                 {a.description && <p className="text-sm text-muted mb-2">{a.description}</p>}
+                {a.participants?.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-2">
+                    {a.participants.map((p) => (
+                      <span key={p._id} className="badge bg-white/5 text-muted border-line text-xs">
+                        {p.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {a.mediaUrls?.length > 0 && (
                   <div className="flex flex-wrap gap-3">
                     {a.mediaUrls.map((url, i) => (
@@ -113,7 +149,11 @@ export default function Activities() {
                     className="input"
                     required
                     value={form.subdivision}
-                    onChange={(e) => setForm({ ...form, subdivision: e.target.value })}
+                    onChange={(e) => {
+                      const subdivision = e.target.value;
+                      setForm({ ...form, subdivision, participants: [] });
+                      loadMembers(subdivision);
+                    }}
                   >
                     <option value="">Selecciona…</option>
                     {subdivisions.map((s) => (
@@ -152,6 +192,35 @@ export default function Activities() {
                   value={form.description}
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
                 />
+              </div>
+              <div>
+                <label className="text-xs text-muted block mb-1">
+                  Participantes {form.participants.length > 0 && `(${form.participants.length} seleccionados)`}
+                </label>
+                {!form.subdivision ? (
+                  <p className="text-xs text-muted italic">
+                    Selecciona una subdivisión para ver sus miembros.
+                  </p>
+                ) : members.length === 0 ? (
+                  <p className="text-xs text-muted italic">No hay miembros registrados en esta subdivisión.</p>
+                ) : (
+                  <div className="max-h-48 overflow-y-auto border border-line rounded-md p-2 space-y-1">
+                    {members.map((m) => (
+                      <label
+                        key={m._id}
+                        className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-white/5 cursor-pointer text-sm"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={form.participants.includes(m._id)}
+                          onChange={() => toggleParticipant(m._id)}
+                        />
+                        <span className="text-cream">{m.name}</span>
+                        {m.grade && <span className="text-xs text-muted">— {m.grade}</span>}
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
               <div>
                 <label className="text-xs text-muted block mb-1">
