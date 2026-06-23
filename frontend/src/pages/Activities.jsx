@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Plus, Trash2, Link as LinkIcon } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Plus, Trash2, Users as UsersIcon } from "lucide-react";
 import api from "../api/axios";
 import { useAuth } from "../context/AuthContext";
 
@@ -9,12 +9,13 @@ export default function Activities() {
   const [subdivisions, setSubdivisions] = useState([]);
   const [members, setMembers] = useState([]);
   const [showForm, setShowForm] = useState(false);
+  // "all" = ver todas las subdivisiones juntas; si no, es el _id de la subdivisión elegida
+  const [viewFilter, setViewFilter] = useState("all");
   const [form, setForm] = useState({
     subdivision: user.role === "coordinador_sub" ? user.subdivision : "",
     title: "",
     description: "",
     date: new Date().toISOString().slice(0, 10),
-    mediaUrls: "",
     participants: [],
   });
 
@@ -58,15 +59,9 @@ export default function Activities() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    const payload = {
-      ...form,
-      mediaUrls: form.mediaUrls
-        ? form.mediaUrls.split(",").map((u) => u.trim()).filter(Boolean)
-        : [],
-    };
-    await api.post("/activities", payload);
+    await api.post("/activities", form);
     setShowForm(false);
-    setForm({ ...form, title: "", description: "", mediaUrls: "", participants: [] });
+    setForm({ ...form, title: "", description: "", participants: [] });
     loadAll();
   }
 
@@ -75,6 +70,36 @@ export default function Activities() {
     await api.delete(`/activities/${id}`);
     loadAll();
   }
+
+  // Actividades a mostrar según el filtro de vista elegido arriba.
+  const visibleActivities = useMemo(() => {
+    if (viewFilter === "all") return activities;
+    return activities.filter((a) => a.subdivision?._id === viewFilter);
+  }, [activities, viewFilter]);
+
+  // Cuenta participaciones por miembro dentro de un set de actividades dado.
+  function rankParticipants(list) {
+    const counts = new Map();
+    for (const a of list) {
+      for (const p of a.participants || []) {
+        if (!p?._id) continue;
+        const entry = counts.get(p._id) || { name: p.name, count: 0 };
+        entry.count += 1;
+        counts.set(p._id, entry);
+      }
+    }
+    return [...counts.values()].sort((a, b) => b.count - a.count);
+  }
+
+  // Estadísticas según el filtro: en "Todos" se muestra el ranking general (top 5);
+  // por subdivisión se muestra solo el más activo de esa subdivisión.
+  const stats = useMemo(() => {
+    if (viewFilter === "all") {
+      return { mode: "all", top: rankParticipants(activities).slice(0, 5) };
+    }
+    const ranked = rankParticipants(visibleActivities);
+    return { mode: "subdivision", top: ranked.slice(0, 1), totalActivities: visibleActivities.length };
+  }, [activities, visibleActivities, viewFilter]);
 
   return (
     <div>
@@ -88,8 +113,80 @@ export default function Activities() {
         </button>
       </header>
 
+      {user.role !== "coordinador_sub" && (
+        <div className="mb-6">
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <button
+              onClick={() => setViewFilter("all")}
+              className={`badge cursor-pointer ${
+                viewFilter === "all" ? "bg-gold/10 text-gold border-gold/30" : "border-line text-muted"
+              }`}
+            >
+              Todas
+            </button>
+            {subdivisions.map((s) => (
+              <button
+                key={s._id}
+                onClick={() => setViewFilter(s._id)}
+                className={`badge cursor-pointer ${
+                  viewFilter === s._id ? "bg-gold/10 text-gold border-gold/30" : "border-line text-muted"
+                }`}
+              >
+                {s.name}
+              </button>
+            ))}
+          </div>
+
+          <div className="card p-5">
+            {stats.mode === "all" ? (
+              <>
+                <p className="text-xs tracking-widest text-gold uppercase mb-3 flex items-center gap-2">
+                  <UsersIcon size={14} /> Miembros más activos (todas las subdivisiones)
+                </p>
+                {stats.top.length === 0 ? (
+                  <p className="text-sm text-muted">Todavía no hay participaciones registradas.</p>
+                ) : (
+                  <ol className="space-y-1.5">
+                    {stats.top.map((m, i) => (
+                      <li key={i} className="flex items-center justify-between text-sm">
+                        <span className="text-cream">
+                          {i + 1}. {m.name}
+                        </span>
+                        <span className="text-xs text-muted font-mono">
+                          {m.count} actividad{m.count !== 1 ? "es" : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="text-xs tracking-widest text-gold uppercase mb-3 flex items-center gap-2">
+                  <UsersIcon size={14} /> Miembro más activo de esta subdivisión
+                </p>
+                {stats.top.length === 0 ? (
+                  <p className="text-sm text-muted">Todavía no hay participaciones registradas aquí.</p>
+                ) : (
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-cream">{stats.top[0].name}</span>
+                    <span className="text-xs text-muted font-mono">
+                      {stats.top[0].count} actividad{stats.top[0].count !== 1 ? "es" : ""}
+                    </span>
+                  </div>
+                )}
+                <p className="text-xs text-muted mt-2">
+                  {stats.totalActivities} actividad{stats.totalActivities !== 1 ? "es" : ""} registrada
+                  {stats.totalActivities !== 1 ? "s" : ""} en esta subdivisión.
+                </p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="space-y-4">
-        {activities.map((a) => (
+        {visibleActivities.map((a) => (
           <div key={a._id} className="card p-5">
             <div className="flex items-start justify-between">
               <div>
@@ -108,21 +205,6 @@ export default function Activities() {
                     ))}
                   </div>
                 )}
-                {a.mediaUrls?.length > 0 && (
-                  <div className="flex flex-wrap gap-3">
-                    {a.mediaUrls.map((url, i) => (
-                      <a
-                        key={i}
-                        href={url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs text-gold hover:text-gold-light flex items-center gap-1"
-                      >
-                        <LinkIcon size={12} /> Evidencia {i + 1}
-                      </a>
-                    ))}
-                  </div>
-                )}
               </div>
               <button onClick={() => handleDelete(a._id)} className="text-muted hover:text-bad">
                 <Trash2 size={16} />
@@ -130,7 +212,7 @@ export default function Activities() {
             </div>
           </div>
         ))}
-        {activities.length === 0 && (
+        {visibleActivities.length === 0 && (
           <div className="card p-8 text-center text-muted text-sm">
             Todavía no hay actividades registradas.
           </div>
@@ -221,17 +303,6 @@ export default function Activities() {
                     ))}
                   </div>
                 )}
-              </div>
-              <div>
-                <label className="text-xs text-muted block mb-1">
-                  Enlaces a fotos/videos (separados por coma)
-                </label>
-                <input
-                  className="input"
-                  placeholder="https://drive.google.com/..."
-                  value={form.mediaUrls}
-                  onChange={(e) => setForm({ ...form, mediaUrls: e.target.value })}
-                />
               </div>
             </div>
             <div className="flex gap-3 mt-6">
